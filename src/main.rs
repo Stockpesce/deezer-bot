@@ -18,20 +18,20 @@ use teloxide::{
     Bot,
 };
 
+const SILENT_AUDIO: &str = "https://github.com/BRA1L0R/deezer-bot/raw/master/assets/silent.mp3";
+
 fn make_query_result(result: &SearchResult) -> InlineQueryResult {
-    InlineQueryResultAudio::new(
-        result.id.to_string(),
-        "https://github.com/anars/blank-audio/raw/master/10-seconds-of-silence.mp3"
-            .parse()
-            .unwrap(),
-        &result.title,
-    )
-    .performer(&result.artist.name)
-    .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
-        "Loading...",
-        InlineKeyboardButtonKind::CallbackData("callback".to_string()),
-    )]]))
-    .into()
+    let mut url: reqwest::Url = SILENT_AUDIO.parse().unwrap();
+    url.set_query(Some(&result.id.to_string()));
+
+    InlineQueryResultAudio::new(result.id.to_string(), url, &result.title)
+        .performer(&result.artist.name)
+        .caption("The file is downloading... please wait.")
+        .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
+            "Loading...",
+            InlineKeyboardButtonKind::CallbackData("callback".to_string()),
+        )]]))
+        .into()
 }
 
 async fn search(bot: Bot, q: InlineQuery, deezer: Arc<Deezer>) -> anyhow::Result<()> {
