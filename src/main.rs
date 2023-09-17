@@ -1,13 +1,15 @@
 // id: 31355561
 
+mod deezer;
+
 use std::sync::Arc;
 
 use anyhow::Context;
+use deezer::{Deezer, Song};
 use deezer_downloader::Downloader;
-use deezer_rs::{search::SearchResult, Deezer};
 use teloxide::{
     dispatching::UpdateFilterExt,
-    payloads::SendAudioSetters,
+    payloads::{AnswerInlineQuerySetters, SendAudioSetters},
     prelude::Dispatcher,
     requests::Requester,
     types::{
@@ -18,38 +20,41 @@ use teloxide::{
     Bot,
 };
 
-const SILENT_AUDIO: &str = "https://github.com/BRA1L0R/deezer-bot/raw/master/assets/silent.mp3";
-
-fn make_query_result(result: &SearchResult) -> InlineQueryResult {
-    let mut url: reqwest::Url = SILENT_AUDIO.parse().unwrap();
-    url.set_query(Some(&result.id.to_string()));
-
-    InlineQueryResultAudio::new(result.id.to_string(), url, &result.title)
-        .performer(&result.artist.name)
-        .caption("The file is downloading... please wait.")
-        .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
-            "Loading...",
-            InlineKeyboardButtonKind::CallbackData("callback".to_string()),
-        )]]))
-        .into()
+fn make_query_result(result: &Song) -> InlineQueryResult {
+    InlineQueryResultAudio::new(
+        result.id.to_string(),
+        result.preview.parse().unwrap(),
+        &result.title,
+    )
+    .performer(&result.artist.name)
+    .audio_duration(result.duration.to_string())
+    .caption("The file is downloading... please wait.")
+    .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
+        "Loading...",
+        InlineKeyboardButtonKind::CallbackData("callback".to_string()),
+    )]]))
+    .into()
 }
 
 async fn search(bot: Bot, q: InlineQuery, deezer: Arc<Deezer>) -> anyhow::Result<()> {
+    const RESULT_LIMIT: usize = 5;
+
+    if q.query.len() <= 3 {
+        return Ok(());
+    }
+
     let search_result = deezer
-        .search
-        .get(&q.query)
+        .search(&q.query, RESULT_LIMIT as u32)
         .await
-        .map_err(|err| err.into_inner())
         .context("failed search on deezer")?;
 
     let songs = search_result
-        .data
         .iter()
-        .take(5)
+        .take(RESULT_LIMIT)
         .map(make_query_result)
         .map(Into::into);
 
-    bot.answer_inline_query(&q.id, songs).await?;
+    bot.answer_inline_query(&q.id, songs).cache_time(0).await?;
 
     Ok(())
 }
@@ -108,18 +113,14 @@ async fn main() -> anyhow::Result<()> {
     let settings = Arc::new(Settings::from_env()?);
 
     let bot = Bot::from_env();
-    let deezer = Arc::new(Deezer::new());
+    let deezer = Arc::new(Deezer::default());
 
     let downloader = deezer_downloader::Downloader::new().await?;
     let downloader = Arc::new(downloader);
 
     let tree = dptree::entry()
         .branch(Update::filter_inline_query().endpoint(search))
-        .branch(Update::filter_chosen_inline_result().endpoint(chosen))
-        .endpoint(|update: Update| async move {
-            println!("{update:?}");
-            Ok(())
-        });
+        .branch(Update::filter_chosen_inline_result().endpoint(chosen));
 
     Dispatcher::builder(bot, tree)
         .enable_ctrlc_handler()
