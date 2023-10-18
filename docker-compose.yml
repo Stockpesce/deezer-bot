@@ -1,0 +1,14 @@
+services:
+  bot:
+    build: ./
+    restart: always
+    environment:
+      - DATABASE_URL=postgres://postgres:supersecretpassword@database:5432/postgres
+      - TELOXIDE_TOKEN=${TELOXIDE_TOKEN}
+      - BUFFER_CHANNEL=${BUFFER_CHANNEL}
+      - RUST_LOG=info
+  database:
+    image: postgres:latest
+    restart: always
+    environment:
+      - POSTGRES_PASSWORD=supersecretpassword
