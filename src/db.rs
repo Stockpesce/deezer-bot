@@ -32,13 +32,13 @@ impl CachedSong {
     }
 
     /// retrieves a song by its internal id
-    pub async fn by_id<'a>(id: i32, executor: impl PgExecutor<'a>) -> anyhow::Result<CachedSong> {
-        sqlx::query_as("SELECT * FROM songs WHERE id = $1")
-            .bind(id)
-            .fetch_one(executor)
-            .await
-            .map_err(Into::into)
-    }
+    // pub async fn by_id<'a>(id: i32, executor: impl PgExecutor<'a>) -> anyhow::Result<CachedSong> {
+    //     sqlx::query_as("SELECT * FROM songs WHERE id = $1")
+    //         .bind(id)
+    //         .fetch_one(executor)
+    //         .await
+    //         .map_err(Into::into)
+    // }
 
     pub async fn insert_song<'a>(
         deezer_id: u64,
