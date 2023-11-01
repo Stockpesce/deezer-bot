@@ -138,7 +138,10 @@ async fn chosen(
         .inline_message_id
         .context("did not receive inline message id")?;
 
-    let song = downloader.download_song(track_id).await?;
+    let song = downloader
+        .download_song(track_id)
+        .await
+        .context("downloading the file from deezer")?;
 
     let cover = reqwest::get(&song.metadata.album.cover_medium)
         .await?
