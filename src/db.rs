@@ -75,8 +75,8 @@ pub mod queries {
     ) -> anyhow::Result<Vec<HistorySong>> {
         sqlx::query_as(
             r#"
-            SELECT songs.* FROM history 
-            RIGHT JOIN songs ON history.song_id = songs.id 
+            SELECT songs.song_name, songs.song_artist, history.search_date FROM history 
+            INNER JOIN songs ON history.song_id = songs.id 
             WHERE history.user_id = $1 
             ORDER BY history.id DESC
             LIMIT $2
