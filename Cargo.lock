@@ -463,6 +463,7 @@ dependencies = [
  "dotenv",
  "dptree",
  "env_logger",
+ "log",
  "reqwest",
  "serde",
  "serde_json",
@@ -2304,6 +2305,7 @@ dependencies = [
  "serde_json",
  "serde_with_macros",
  "teloxide-core",
+ "teloxide-macros",
  "thiserror",
  "tokio",
  "tokio-stream",
@@ -2340,6 +2342,18 @@ dependencies = [
  "tokio-util",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "teloxide-macros"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f1d653b093dba5e44cada57a516f572167df37b8a619443e59c8c517bb6d804"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]

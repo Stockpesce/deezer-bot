@@ -1,12 +1,16 @@
 use anyhow::Context;
+use deezer_downloader::song::SongMetadata;
 use sqlx::{FromRow, PgExecutor};
 
-#[derive(FromRow)]
+#[derive(FromRow, Debug)]
 pub struct CachedSong {
     pub id: i32,
 
     pub deezer_id: i64,
     pub file_id: String,
+
+    pub song_name: String,
+    pub song_artist: String,
 }
 
 fn slice_conversion(from: &[u64]) -> Option<&[i64]> {
@@ -17,9 +21,9 @@ fn slice_conversion(from: &[u64]) -> Option<&[i64]> {
 }
 
 impl CachedSong {
-    pub async fn by_deezer_ids<'a>(
+    pub async fn by_deezer_ids(
         deezer_ids: &[u64],
-        executor: impl PgExecutor<'a>,
+        executor: impl PgExecutor<'_>,
     ) -> anyhow::Result<Vec<Self>> {
         let postgres_conversion: &[i64] =
             slice_conversion(deezer_ids).context("ids are too big for postgres")?;
@@ -31,21 +35,30 @@ impl CachedSong {
             .map_err(Into::into)
     }
 
-    pub async fn insert_song<'a>(
+    pub async fn insert_song(
         deezer_id: u64,
         file_id: &str,
-        executor: impl PgExecutor<'a>,
+        song: &SongMetadata,
+        executor: impl PgExecutor<'_>,
     ) -> anyhow::Result<CachedSong> {
         let postgres_conversion: i64 = deezer_id
             .try_into()
             .context("deezer id is too large for postgres")?;
 
-        sqlx::query_as("INSERT INTO songs (deezer_id, file_id) VALUES ($1, $2) RETURNING *")
-            .bind(postgres_conversion)
-            .bind(file_id)
-            .fetch_one(executor)
-            .await
-            .map_err(Into::into)
+        sqlx::query_as(
+            r#"
+                INSERT INTO songs (deezer_id, file_id, song_name, song_artist) 
+                VALUES ($1, $2, $3, $4) 
+                RETURNING *
+            "#,
+        )
+        .bind(postgres_conversion)
+        .bind(file_id)
+        .bind(&song.title)
+        .bind(&song.artist.name)
+        .fetch_one(executor)
+        .await
+        .map_err(Into::into)
     }
 }
 
@@ -58,10 +71,10 @@ pub struct HistoryRecord {
 }
 
 impl HistoryRecord {
-    pub async fn get_history<'a>(
+    pub async fn get_history_no_repeat(
         user: i64,
         n: i32,
-        executor: impl PgExecutor<'a>,
+        executor: impl PgExecutor<'_>,
     ) -> anyhow::Result<Vec<CachedSong>> {
         sqlx::query_as(
             r#"
@@ -81,10 +94,31 @@ impl HistoryRecord {
         .map_err(Into::into)
     }
 
-    pub async fn push_history<'a>(
+    pub async fn get_history(
+        user: i64,
+        n: i32,
+        executor: impl PgExecutor<'_>,
+    ) -> anyhow::Result<Vec<CachedSong>> {
+        sqlx::query_as(
+            r#"
+            SELECT songs.* FROM history 
+            RIGHT JOIN songs ON history.song_id = songs.id 
+            WHERE history.user_id = $1 
+            ORDER BY history.id DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(user)
+        .bind(n)
+        .fetch_all(executor)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn push_history(
         cached_song_id: i32,
         user: i64,
-        executor: impl PgExecutor<'a>,
+        executor: impl PgExecutor<'_>,
     ) -> anyhow::Result<()> {
         sqlx::query("INSERT INTO history(user_id, song_id) VALUES ($1, $2)")
             .bind(user)
