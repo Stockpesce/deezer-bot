@@ -11,7 +11,7 @@ use teloxide::{
 };
 
 use crate::{
-    db::{CachedSong, HistoryRecord},
+    db::{queries, CachedSong},
     deezer::{Deezer, Song},
     Settings,
 };
@@ -59,7 +59,7 @@ async fn search(
         .context("failed search on deezer")?;
 
     let ids: Vec<u64> = search_result.iter().map(|result| result.id).collect();
-    let cached_ids = CachedSong::by_deezer_ids(&ids, &pool).await?;
+    let cached_ids = queries::by_deezer_ids(&ids, &pool).await?;
 
     let cached_iter = cached_ids.iter().map(make_cached_query_result);
     let virgin_iter = search_result
@@ -83,7 +83,7 @@ async fn search(
 
 async fn history(bot: Bot, q: InlineQuery, pool: Pool<Postgres>) -> anyhow::Result<()> {
     let UserId(id) = q.from.id;
-    let history = HistoryRecord::get_history_no_repeat(id.try_into().unwrap(), 10, &pool).await?;
+    let history = queries::get_cached_history_no_repeat(id.try_into().unwrap(), 10, &pool).await?;
 
     log::info!("Showing {} history results", history.len());
 
@@ -119,8 +119,7 @@ pub async fn chosen(
     let track_id = match data {
         QueryData::Download(track_id) => track_id,
         QueryData::Cached(file_id) => {
-            HistoryRecord::push_history(file_id, result.from.id.0.try_into().unwrap(), &pool)
-                .await?;
+            queries::push_history(file_id, result.from.id.0.try_into().unwrap(), &pool).await?;
 
             return Ok(());
         }
@@ -155,13 +154,11 @@ pub async fn chosen(
     bot.edit_message_media_inline(message_id, InputMedia::Audio(input_media))
         .await?;
 
-    let cached_song =
-        CachedSong::insert_song(track_id, audio_file_id, &song.metadata, &pool).await?;
+    let cached_song = queries::insert_song(track_id, audio_file_id, &song.metadata, &pool).await?;
 
     log::info!("Caching a new song: {cached_song:?}");
 
-    HistoryRecord::push_history(cached_song.id, result.from.id.0.try_into().unwrap(), &pool)
-        .await?;
+    queries::push_history(cached_song.id, result.from.id.0.try_into().unwrap(), &pool).await?;
 
     Ok(())
 }

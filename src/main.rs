@@ -7,7 +7,6 @@ mod inline;
 use std::sync::Arc;
 
 use anyhow::Context;
-use db::HistoryRecord;
 use deezer::Deezer;
 use sqlx::{pool::PoolOptions, Pool, Postgres};
 use teloxide::{
@@ -18,6 +17,8 @@ use teloxide::{
     utils::command::BotCommands,
     Bot,
 };
+
+use crate::db::queries;
 
 pub struct Settings {
     buffer_channel: ChatId,
@@ -48,7 +49,7 @@ async fn history_command(bot: Bot, msg: Message, pool: Pool<Postgres>) -> anyhow
 
     let from = msg.from().context("command was not sent by a user")?;
 
-    let history = HistoryRecord::get_history(from.id.0 as i64, 10, &pool).await?;
+    let history = queries::get_history(from.id.0 as i64, 10, &pool).await?;
     let text = String::from("Your last 10 searches:\n\n");
     let history_formatted = history
         .into_iter()
@@ -65,7 +66,12 @@ async fn history_command(bot: Bot, msg: Message, pool: Pool<Postgres>) -> anyhow
 }
 
 async fn unknown_command(bot: Bot, msg: Message) -> anyhow::Result<()> {
-    bot.send_message(msg.chat.id, "Uknown command!").await?;
+    // some groups might enable access to all messages
+    // by mistake
+    if msg.chat.is_private() {
+        bot.send_message(msg.chat.id, "Uknown command!").await?;
+    }
+
     Ok(())
 }
 
@@ -87,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
     let settings = Arc::new(Settings::from_env()?);
 
     let client = reqwest::Client::builder()
+        // IPv4 only, ipv6 botapi isn't reachable from everywhere
         .local_address("0.0.0.0".parse().map(Some).unwrap())
         .build()
         .unwrap();
@@ -97,15 +104,18 @@ async fn main() -> anyhow::Result<()> {
     let downloader = deezer_downloader::Downloader::new().await?;
     let downloader = Arc::new(downloader);
 
-    let command_handler = Update::filter_message()
+    let command_handler = dptree::entry()
         .filter_command::<Commands>()
-        .branch(dptree::case![Commands::History].endpoint(history_command))
-        .endpoint(unknown_command);
+        .branch(dptree::case![Commands::History].endpoint(history_command));
 
     let tree = dptree::entry()
-        .branch(command_handler)
         .branch(Update::filter_inline_query().endpoint(inline::inline_query))
-        .branch(Update::filter_chosen_inline_result().endpoint(inline::chosen));
+        .branch(Update::filter_chosen_inline_result().endpoint(inline::chosen))
+        .branch(
+            Update::filter_message()
+                .branch(command_handler)
+                .endpoint(unknown_command),
+        );
 
     bot.set_my_commands(Commands::bot_commands()).await?;
 
