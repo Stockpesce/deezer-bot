@@ -84,7 +84,7 @@ impl HistoryRecord {
                 WHERE history.user_id = $1
                 GROUP BY history.song_id
             ) 
-            RIGHT JOIN songs ON song_id = songs.id 
+            INNER JOIN songs ON song_id = songs.id 
             ORDER BY hid DESC
             LIMIT $2
             "#,
