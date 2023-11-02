@@ -78,13 +78,15 @@ impl HistoryRecord {
     ) -> anyhow::Result<Vec<CachedSong>> {
         sqlx::query_as(
             r#"
-            WITH CTE AS(
-                SELECT songs.*, history.id as hid, ROW_NUMBER() OVER ( PARTITION BY history.song_id )
-                FROM history 
-                RIGHT JOIN songs ON history.song_id = songs.id 
-                WHERE history.user_id = $1 
-            )
-            SELECT * FROM CTE WHERE row_number = 1 ORDER BY hid DESC LIMIT $2
+            SELECT songs.* FROM (
+                SELECT DISTINCT history.song_id, MAX(history.id) as hid
+                FROM history
+                WHERE history.user_id = $1
+                GROUP BY history.song_id
+            ) 
+            RIGHT JOIN songs ON song_id = songs.id 
+            ORDER BY hid DESC
+            LIMIT $2
             "#,
         )
         .bind(user)
