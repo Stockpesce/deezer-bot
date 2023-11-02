@@ -204,7 +204,12 @@ async fn main() -> anyhow::Result<()> {
 
     let settings = Arc::new(Settings::from_env()?);
 
-    let bot = Bot::from_env();
+    let client = reqwest::Client::builder()
+        .local_address("0.0.0.0".parse().map(Some).unwrap())
+        .build()
+        .unwrap();
+    let bot = Bot::from_env_with_client(client);
+
     let deezer = Arc::new(Deezer::default());
 
     let downloader = deezer_downloader::Downloader::new().await?;

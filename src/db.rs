@@ -31,15 +31,6 @@ impl CachedSong {
             .map_err(Into::into)
     }
 
-    /// retrieves a song by its internal id
-    // pub async fn by_id<'a>(id: i32, executor: impl PgExecutor<'a>) -> anyhow::Result<CachedSong> {
-    //     sqlx::query_as("SELECT * FROM songs WHERE id = $1")
-    //         .bind(id)
-    //         .fetch_one(executor)
-    //         .await
-    //         .map_err(Into::into)
-    // }
-
     pub async fn insert_song<'a>(
         deezer_id: u64,
         file_id: &str,
@@ -74,10 +65,13 @@ impl HistoryRecord {
     ) -> anyhow::Result<Vec<CachedSong>> {
         sqlx::query_as(
             r#"
-                SELECT songs.* FROM history 
+            WITH CTE AS(
+                SELECT songs.*, history.id as hid, ROW_NUMBER() OVER ( PARTITION BY history.song_id )
+                FROM history 
                 RIGHT JOIN songs ON history.song_id = songs.id 
                 WHERE history.user_id = $1 
-                ORDER BY history.id DESC LIMIT $2
+            )
+            SELECT * FROM CTE WHERE row_number = 1 ORDER BY hid DESC LIMIT $2
             "#,
         )
         .bind(user)
