@@ -49,14 +49,13 @@ async fn history_command(bot: Bot, msg: Message, pool: Pool<Postgres>) -> anyhow
     let from = msg.from().context("command was not sent by a user")?;
 
     let history = HistoryRecord::get_history(from.id.0 as i64, 10, &pool).await?;
-
     let text = String::from("Your last 10 searches:\n\n");
     let history_formatted = history
         .into_iter()
         .enumerate()
+        .map(|(n, song)| (n + 1, song))
         .fold(text, |mut s, (n, song)| {
-            let n = n + 1;
-            writeln!(&mut s, "{n}) {} - {}", song.song_name, song.song_artist).ok();
+            writeln!(&mut s, "{n}) {} - {}", song.song_artist, song.song_name).ok();
             s
         });
 
