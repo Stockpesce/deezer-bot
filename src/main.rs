@@ -94,7 +94,6 @@ async fn history(bot: Bot, q: InlineQuery, pool: Pool<Postgres>) -> anyhow::Resu
     let results = history.iter().map(make_cached_query_result);
 
     let results: Vec<_> = results.collect();
-    println!("{results:?}");
 
     bot.answer_inline_query(q.id, results).cache_time(0).await?;
 
