@@ -5,15 +5,11 @@ mod deezer;
 mod inline;
 mod telemetry;
 
-use std::{convert::Infallible, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Context;
 use deezer::Deezer;
-use hyper::{
-    service::{make_service_fn, service_fn},
-    Server,
-};
-use prometheus::{Registry, TextEncoder};
+use prometheus::Registry;
 use sqlx::{pool::PoolOptions, Pool, Postgres};
 use teloxide::{
     dispatching::{HandlerExt, UpdateFilterExt},
@@ -25,7 +21,7 @@ use teloxide::{
     Bot,
 };
 
-use crate::db::queries;
+use crate::{db::queries, deezer::DeezerDownloader};
 
 pub struct Settings {
     buffer_channel: ChatId,
@@ -121,20 +117,6 @@ fn setup_bot() -> Bot {
     Bot::from_env_with_client(client)
 }
 
-async fn prometheus_serve(
-    registry: Registry,
-) -> Result<hyper::Response<hyper::Body>, hyper::Error> {
-    let encoder = TextEncoder::new();
-    let encoded = encoder.encode_to_string(&registry.gather()).unwrap();
-
-    let response = hyper::Response::builder()
-        .status(200)
-        .body(hyper::Body::from(encoded))
-        .unwrap();
-
-    Ok(response)
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
@@ -143,14 +125,7 @@ async fn main() -> anyhow::Result<()> {
     let registry = Registry::new();
 
     let telemetry = telemetry::setup_telemetry(registry.clone())?;
-
-    let service = make_service_fn(move |_| {
-        let registry = registry.clone();
-        async move { Ok::<_, Infallible>(service_fn(move |_| prometheus_serve(registry.clone()))) }
-    });
-
-    let server = Server::bind(&"0.0.0.0:8080".parse().unwrap()).serve(service);
-    tokio::spawn(server);
+    telemetry::listen_prometheus_server(([0, 0, 0, 0], 8080), registry);
 
     // database setup
     let db_url = std::env::var("DATABASE_URL").context("missing DB_URL")?;
@@ -168,8 +143,7 @@ async fn main() -> anyhow::Result<()> {
 
     // deezer setup
     let deezer = Arc::new(Deezer::default());
-    let downloader = deezer_downloader::Downloader::new().await?;
-    let downloader = Arc::new(downloader);
+    let downloader = DeezerDownloader::new().await?;
 
     // bot setup
     let bot = setup_bot();
@@ -203,5 +177,5 @@ async fn main() -> anyhow::Result<()> {
         .dispatch()
         .await;
 
-    todo!()
+    Ok(())
 }

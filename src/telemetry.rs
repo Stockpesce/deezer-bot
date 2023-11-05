@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, net::SocketAddr};
 
 use opentelemetry::{metrics::MeterProvider, sdk, KeyValue};
 use prometheus::Registry;
@@ -46,4 +46,35 @@ pub fn update_telemetry(provider: &sdk::metrics::MeterProvider) -> impl Fn() {
     move || {
         meter_metric.add(1, &[]);
     }
+}
+
+async fn prometheus_serve(
+    registry: Registry,
+) -> Result<hyper::Response<hyper::Body>, hyper::Error> {
+    let encoder = prometheus::TextEncoder::new();
+    let encoded = encoder.encode_to_string(&registry.gather()).unwrap();
+
+    let response = hyper::Response::builder()
+        .status(200)
+        .body(hyper::Body::from(encoded))
+        .unwrap();
+
+    Ok(response)
+}
+
+/// prepares and runs an http server on `address`
+/// that responds with prometheus-encoded telemetry data
+pub fn listen_prometheus_server(address: impl Into<SocketAddr>, registry: Registry) {
+    use hyper::service::*;
+    use std::convert::Infallible;
+
+    let address = address.into();
+
+    let service = make_service_fn(move |_| {
+        let registry = registry.clone();
+        async move { Ok::<_, Infallible>(service_fn(move |_| prometheus_serve(registry.clone()))) }
+    });
+
+    let server = hyper::Server::bind(&address).serve(service);
+    tokio::spawn(server);
 }

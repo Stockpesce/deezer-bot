@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use deezer_downloader::Downloader;
 use sqlx::{Pool, Postgres};
 use teloxide::{
     payloads::{AnswerInlineQuerySetters, SendAudioSetters},
@@ -12,7 +11,7 @@ use teloxide::{
 
 use crate::{
     db::{queries, CachedSong},
-    deezer::{Deezer, Song},
+    deezer::{Deezer, DeezerDownloader, Song},
     Settings,
 };
 
@@ -109,7 +108,7 @@ pub async fn inline_query(
 pub async fn chosen(
     bot: Bot,
     result: ChosenInlineResult,
-    downloader: Arc<Downloader>,
+    downloader: DeezerDownloader,
     settings: Arc<Settings>,
     pool: Pool<Postgres>,
 ) -> anyhow::Result<()> {
@@ -130,7 +129,7 @@ pub async fn chosen(
         .context("did not receive inline message id")?;
 
     let song = downloader
-        .download_song(track_id)
+        .download(track_id)
         .await
         .context("downloading the file from deezer")?;
 
