@@ -3,11 +3,17 @@
 mod db;
 mod deezer;
 mod inline;
+mod telemetry;
 
-use std::sync::Arc;
+use std::{convert::Infallible, sync::Arc};
 
 use anyhow::Context;
 use deezer::Deezer;
+use hyper::{
+    service::{make_service_fn, service_fn},
+    Server,
+};
+use prometheus::{Registry, TextEncoder};
 use sqlx::{pool::PoolOptions, Pool, Postgres};
 use teloxide::{
     dispatching::{HandlerExt, UpdateFilterExt},
@@ -44,6 +50,14 @@ enum Commands {
     History,
 }
 
+impl std::fmt::Display for Commands {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::History => write!(f, "history"),
+        }
+    }
+}
+
 async fn history_command(bot: Bot, msg: Message, pool: Pool<Postgres>) -> anyhow::Result<()> {
     use std::fmt::Write;
 
@@ -75,11 +89,47 @@ async fn unknown_command(bot: Bot, msg: Message) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn setup_bot() -> Bot {
+    let client = reqwest::Client::builder()
+        // IPv4 only, ipv6 botapi isn't reachable from everywhere
+        .local_address("0.0.0.0".parse().map(Some).unwrap())
+        .build()
+        .unwrap();
+    Bot::from_env_with_client(client)
+}
+
+async fn prometheus_serve(
+    registry: Registry,
+) -> Result<hyper::Response<hyper::Body>, hyper::Error> {
+    let encoder = TextEncoder::new();
+    let encoded = encoder.encode_to_string(&registry.gather()).unwrap();
+
+    let response = hyper::Response::builder()
+        .status(200)
+        .body(hyper::Body::from(encoded))
+        .unwrap();
+
+    Ok(response)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
     env_logger::init();
 
+    let registry = Registry::new();
+
+    let telemetry = telemetry::setup_telemetry(registry.clone())?;
+
+    let service = make_service_fn(move |_| {
+        let registry = registry.clone();
+        async move { Ok::<_, Infallible>(service_fn(move |_| prometheus_serve(registry.clone()))) }
+    });
+
+    let server = Server::bind(&"0.0.0.0:8080".parse().unwrap()).serve(service);
+    tokio::spawn(server);
+
+    // database setup
     let db_url = std::env::var("DATABASE_URL").context("missing DB_URL")?;
     let pool = PoolOptions::<Postgres>::new()
         .max_connections(12)
@@ -90,30 +140,33 @@ async fn main() -> anyhow::Result<()> {
 
     sqlx::migrate!().run(&pool).await?;
 
+    // read settings from env
     let settings = Arc::new(Settings::from_env()?);
 
-    let client = reqwest::Client::builder()
-        // IPv4 only, ipv6 botapi isn't reachable from everywhere
-        .local_address("0.0.0.0".parse().map(Some).unwrap())
-        .build()
-        .unwrap();
-    let bot = Bot::from_env_with_client(client);
-
+    // deezer setup
     let deezer = Arc::new(Deezer::default());
-
     let downloader = deezer_downloader::Downloader::new().await?;
     let downloader = Arc::new(downloader);
 
-    let command_handler = dptree::entry()
+    // bot setup
+    let bot = setup_bot();
+
+    let command_tree = dptree::entry()
         .filter_command::<Commands>()
+        .inspect(telemetry::command_telemetry::<Commands>(&telemetry))
         .branch(dptree::case![Commands::History].endpoint(history_command));
 
     let tree = dptree::entry()
-        .branch(Update::filter_inline_query().endpoint(inline::inline_query))
+        .inspect(telemetry::update_telemetry(&telemetry))
+        .branch(
+            Update::filter_inline_query()
+                .inspect(telemetry::inline_telemetry(&telemetry))
+                .endpoint(inline::inline_query),
+        )
         .branch(Update::filter_chosen_inline_result().endpoint(inline::chosen))
         .branch(
             Update::filter_message()
-                .branch(command_handler)
+                .branch(command_tree)
                 .endpoint(unknown_command),
         );
 

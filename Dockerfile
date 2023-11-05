@@ -22,8 +22,8 @@ RUN cargo build --release
 # final runnable image
 FROM debian:bookworm-slim
 
-COPY --from=build /deezer/target/release/deezer .
 RUN apt update && apt upgrade -y && apt install -y libssl-dev ca-certificates
+COPY --from=build /deezer/target/release/deezer .
 
 
 RUN chmod a+x ./deezer
