@@ -17,9 +17,10 @@ use prometheus::{Registry, TextEncoder};
 use sqlx::{pool::PoolOptions, Pool, Postgres};
 use teloxide::{
     dispatching::{HandlerExt, UpdateFilterExt},
+    payloads::SendMessageSetters,
     prelude::Dispatcher,
     requests::Requester,
-    types::{ChatId, Message, Update},
+    types::{ChatId, InlineKeyboardButton, Message, ParseMode, ReplyMarkup, Update},
     utils::command::BotCommands,
     Bot,
 };
@@ -48,12 +49,16 @@ impl Settings {
 enum Commands {
     #[command(description = "Display your search history")]
     History,
+
+    #[command(description = "Show start message")]
+    Start,
 }
 
 impl std::fmt::Display for Commands {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::History => write!(f, "history"),
+            Self::Start => write!(f, "start"),
         }
     }
 }
@@ -75,6 +80,24 @@ async fn history_command(bot: Bot, msg: Message, pool: Pool<Postgres>) -> anyhow
         });
 
     bot.send_message(msg.chat.id, history_formatted).await?;
+
+    Ok(())
+}
+
+async fn start_command(bot: Bot, message: Message) -> anyhow::Result<()> {
+    let button = InlineKeyboardButton::new(
+        "Search a song",
+        teloxide::types::InlineKeyboardButtonKind::SwitchInlineQueryCurrentChat("".into()),
+    );
+    let keyboard_markup = ReplyMarkup::inline_kb([[button]]);
+
+    bot.send_message(
+        message.chat.id,
+        "Hi, song searching is only available inline.\nStart searching by clicking the button below",
+    )
+    .reply_markup(keyboard_markup)
+    .parse_mode(ParseMode::Html)
+    .await?;
 
     Ok(())
 }
@@ -154,7 +177,8 @@ async fn main() -> anyhow::Result<()> {
     let command_tree = dptree::entry()
         .filter_command::<Commands>()
         .inspect(telemetry::command_telemetry::<Commands>(&telemetry))
-        .branch(dptree::case![Commands::History].endpoint(history_command));
+        .branch(dptree::case![Commands::History].endpoint(history_command))
+        .branch(dptree::case![Commands::Start].endpoint(start_command));
 
     let tree = dptree::entry()
         .inspect(telemetry::update_telemetry(&telemetry))
