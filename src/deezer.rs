@@ -106,6 +106,8 @@ impl DeezerDownloader {
         }
 
         let inner = self.inner.read().await;
-        inner.downloader.download_song(id).await.map_err(Into::into)
+        let song = deezer_downloader::song::Song::download(id, &inner.downloader).await?;
+
+        Ok(song)
     }
 }

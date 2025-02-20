@@ -1,7 +1,9 @@
 // id: 31355561
 
+mod callback;
 mod db;
 mod deezer;
+mod encoding;
 mod inline;
 mod telemetry;
 
@@ -161,6 +163,7 @@ async fn main() -> anyhow::Result<()> {
                 .inspect(telemetry::inline_telemetry(&telemetry))
                 .endpoint(inline::inline_query),
         )
+        .branch(Update::filter_callback_query())
         .branch(Update::filter_chosen_inline_result().endpoint(inline::chosen))
         .branch(
             Update::filter_message()

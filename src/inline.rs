@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use base64::{engine::general_purpose::NO_PAD, prelude::BASE64_STANDARD_NO_PAD, Engine};
 use sqlx::{Pool, Postgres};
 use teloxide::{
     payloads::{AnswerInlineQuerySetters, SendAudioSetters},
@@ -10,21 +11,26 @@ use teloxide::{
 };
 
 use crate::{
+    callback::{self, CallbackData},
     db::{queries, CachedSong},
     deezer::{Deezer, DeezerDownloader, Song},
-    Settings,
+    encoding, Settings,
 };
 
 #[derive(serde::Serialize, serde::Deserialize)]
+/// Wrapper structure that gets serialized in the result id of the
+/// inline query results, so that [`chosen`] knows what song we are talking about
 enum QueryData {
     // deezer id,
-    Download(u64),
+    Download(u64), // this is the deezer id, not the file id, neither it is the database songs(id)
     // cached song id
-    Cached(i32),
+    Cached(i32), // this is songs(id), not file id
 }
 
+/// case when a song has not been registered yet in the database
+/// and yet has to be cached. Replaces it with its http preview.
 fn make_unregistered_query_result(result: &Song) -> InlineQueryResult {
-    let id = serde_json::to_string(&QueryData::Download(result.id)).unwrap();
+    let id = encoding::encode(QueryData::Download(result.id)).unwrap();
 
     InlineQueryResultAudio::new(id, result.preview.parse().unwrap(), &result.title)
         .performer(&result.artist.name)
@@ -32,16 +38,27 @@ fn make_unregistered_query_result(result: &Song) -> InlineQueryResult {
         .caption("The file is downloading... please wait.")
         .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
             "Loading...",
-            InlineKeyboardButtonKind::CallbackData("callback".to_string()),
+            InlineKeyboardButtonKind::CallbackData(
+                encoding::encode(CallbackData::Nothing).unwrap(),
+            ),
         )]]))
         .into()
 }
 
+/// case when a song is already cached
 fn make_cached_query_result(registered: &CachedSong) -> InlineQueryResult {
-    let id = serde_json::to_string(&QueryData::Cached(registered.id)).unwrap();
-    InlineQueryResultCachedAudio::new(id, &registered.file_id).into()
+    let result_encoded_id = encoding::encode(QueryData::Cached(registered.id)).unwrap();
+    let reply_markup_encoded = encoding::encode(CallbackData::Like { id: registered.id }).unwrap();
+
+    InlineQueryResultCachedAudio::new(result_encoded_id, &registered.file_id)
+        .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
+            "Like",
+            InlineKeyboardButtonKind::CallbackData(reply_markup_encoded),
+        )]]))
+        .into()
 }
 
+/// inline search, when the query is not empty
 async fn search(
     bot: Bot,
     q: InlineQuery,
@@ -50,7 +67,7 @@ async fn search(
 ) -> anyhow::Result<()> {
     const RESULT_LIMIT: usize = 5;
 
-    log::info!("Searching '{}' on deezer", q.query);
+    log::debug!("Searching '{}' on deezer", q.query);
 
     let search_result = deezer
         .search(&q.query, RESULT_LIMIT as u32)
@@ -80,11 +97,12 @@ async fn search(
     Ok(())
 }
 
+/// inline search when the query is empty
 async fn history(bot: Bot, q: InlineQuery, pool: Pool<Postgres>) -> anyhow::Result<()> {
     let UserId(id) = q.from.id;
     let history = queries::get_cached_history_no_repeat(id.try_into().unwrap(), 10, &pool).await?;
 
-    log::info!("Showing {} history results", history.len());
+    log::debug!("Showing {} history results", history.len());
 
     let results = history.iter().map(make_cached_query_result);
     bot.answer_inline_query(q.id, results).cache_time(0).await?;
@@ -99,12 +117,16 @@ pub async fn inline_query(
     pool: Pool<Postgres>,
 ) -> anyhow::Result<()> {
     match q.query.len() {
+        // when query is empty show the user its history
         0 => history(bot, q, pool).await,
         3.. => search(bot, q, deezer, pool).await,
         _ => Ok(()),
     }
 }
 
+/// callback from telegram when the user has chosen an inline result.
+///
+/// it is called so that
 pub async fn chosen(
     bot: Bot,
     result: ChosenInlineResult,
@@ -113,13 +135,13 @@ pub async fn chosen(
     pool: Pool<Postgres>,
 ) -> anyhow::Result<()> {
     // null character = no need to download
-    let data: QueryData = serde_json::from_str(&result.result_id)?;
+    // let data: QueryData = serde_json::from_str(&result.result_id)?;
+    let data: QueryData = encoding::decode(&result.result_id)?;
 
     let track_id = match data {
         QueryData::Download(track_id) => track_id,
         QueryData::Cached(file_id) => {
             queries::push_history(file_id, result.from.id.0.try_into().unwrap(), &pool).await?;
-
             return Ok(());
         }
     };
@@ -155,8 +177,7 @@ pub async fn chosen(
 
     let cached_song = queries::insert_song(track_id, audio_file_id, &song.metadata, &pool).await?;
 
-    log::info!("Caching a new song: {cached_song:?}");
-
+    log::debug!("Caching a new song: {cached_song:?}");
     queries::push_history(cached_song.id, result.from.id.0.try_into().unwrap(), &pool).await?;
 
     Ok(())

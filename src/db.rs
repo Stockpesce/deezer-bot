@@ -36,12 +36,58 @@ pub struct HistorySong {
     pub search_date: chrono::DateTime<Utc>,
 }
 
+#[derive(FromRow)]
+pub struct LikedSong {
+    pub liked_by: i64,
+    pub song_id: i64,
+
+    pub sent_by: i64,
+    pub liked_date: chrono::DateTime<Utc>,
+}
+
 pub mod queries {
     use anyhow::Context;
     use deezer_downloader::song::SongMetadata;
     use sqlx::PgExecutor;
 
     use super::{slice_conversion, CachedSong, HistorySong};
+
+    /// a value of true means the song got liked by calling this method,
+    /// a value of false means the liked was toggled off.
+    pub async fn toggle_like_song(
+        user: i64,
+        song_id: i64,
+        sent_by: i64,
+        executor: impl PgExecutor<'_>,
+    ) -> anyhow::Result<bool> {
+        sqlx::query_scalar(
+            r#"
+            INSERT INTO likes (liked_by, song_id, sent_by, like_date, liked)
+            VALUES ($1, $2, $3, $4, true)
+            ON CONFLICT DO UPDATE SET likes.liked = NOT likes.liked
+            RETURNING likes.liked
+            "#,
+        )
+        .bind(user)
+        .bind(song_id)
+        .bind(sent_by)
+        .fetch_one(executor)
+        .await
+        .map_err(Into::into)
+    }
+
+    /// returns the amount likes a song has
+    pub async fn song_likes(song_id: i64, executor: impl PgExecutor<'_>) -> anyhow::Result<i64> {
+        sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*) FROM likes WHERE song_id = $1
+            "#,
+        )
+        .bind(song_id)
+        .fetch_one(executor)
+        .await
+        .map_err(Into::into)
+    }
 
     pub async fn get_cached_history_no_repeat(
         user: i64,
@@ -55,8 +101,8 @@ pub mod queries {
                 FROM history
                 WHERE history.user_id = $1
                 GROUP BY history.song_id
-            ) 
-            INNER JOIN songs ON song_id = songs.id 
+            )
+            INNER JOIN songs ON song_id = songs.id
             ORDER BY hid DESC
             LIMIT $2
             "#,
@@ -75,9 +121,9 @@ pub mod queries {
     ) -> anyhow::Result<Vec<HistorySong>> {
         sqlx::query_as(
             r#"
-            SELECT songs.song_name, songs.song_artist, history.search_date FROM history 
-            INNER JOIN songs ON history.song_id = songs.id 
-            WHERE history.user_id = $1 
+            SELECT songs.song_name, songs.song_artist, history.search_date FROM history
+            INNER JOIN songs ON history.song_id = songs.id
+            WHERE history.user_id = $1
             ORDER BY history.id DESC
             LIMIT $2
             "#,
@@ -132,8 +178,8 @@ pub mod queries {
 
         sqlx::query_as(
             r#"
-                INSERT INTO songs (deezer_id, file_id, song_name, song_artist) 
-                VALUES ($1, $2, $3, $4) 
+                INSERT INTO songs (deezer_id, file_id, song_name, song_artist)
+                VALUES ($1, $2, $3, $4)
                 RETURNING *
             "#,
         )
