@@ -7,9 +7,10 @@ mod encoding;
 mod inline;
 mod telemetry;
 
-use std::sync::Arc;
+use std::{os::unix::process, sync::Arc};
 
 use anyhow::Context;
+use callback::CallbackData;
 use deezer::Deezer;
 use prometheus::Registry;
 use sqlx::{pool::PoolOptions, Pool, Postgres};
@@ -130,7 +131,7 @@ async fn main() -> anyhow::Result<()> {
     telemetry::listen_prometheus_server(([0, 0, 0, 0], 8080), registry);
 
     // database setup
-    let db_url = std::env::var("DATABASE_URL").context("missing DB_URL")?;
+    let db_url = std::env::var("DATABASE_URL").context("missing DATABASE_URL")?;
     let pool = PoolOptions::<Postgres>::new()
         .max_connections(12)
         .min_connections(4)
@@ -163,7 +164,11 @@ async fn main() -> anyhow::Result<()> {
                 .inspect(telemetry::inline_telemetry(&telemetry))
                 .endpoint(inline::inline_query),
         )
-        .branch(Update::filter_callback_query())
+        .branch(
+            Update::filter_callback_query()
+                .filter_map(encoding::callback_decoder::<CallbackData>())
+                .endpoint(callback::handle_callback),
+        )
         .branch(Update::filter_chosen_inline_result().endpoint(inline::chosen))
         .branch(
             Update::filter_message()
@@ -173,8 +178,13 @@ async fn main() -> anyhow::Result<()> {
 
     bot.set_my_commands(Commands::bot_commands()).await?;
 
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        std::process::exit(0);
+    });
+
     Dispatcher::builder(bot, tree)
-        .enable_ctrlc_handler()
+        // .enable_ctrlc_handler()
         .dependencies(dptree::deps![deezer, downloader, settings, pool])
         .build()
         .dispatch()

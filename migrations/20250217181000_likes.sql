@@ -8,5 +8,5 @@ CREATE TABLE likes (
     liked     BOOL      NOT NULL,
 
     PRIMARY KEY (liked_by, song_id),
-    CONSTRAINT likes_song_id FOREIGN KEY(song_id) REFERENCES songs(id),
+    CONSTRAINT likes_song_id FOREIGN KEY(song_id) REFERENCES songs(id)
 );

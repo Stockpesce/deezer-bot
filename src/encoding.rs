@@ -28,5 +28,10 @@ pub fn decode<T: DeserializeOwned>(from: &str) -> Result<T, EncoderError> {
 }
 
 pub fn callback_decoder<T: Serialize + DeserializeOwned>() -> impl Fn(CallbackQuery) -> Option<T> {
-    move |query: CallbackQuery| {}
+    move |query: CallbackQuery| {
+        let data = query.data?;
+        crate::encoding::decode(&data)
+            .inspect_err(|err| log::error!("Error decoding callback data! {err}"))
+            .ok()
+    }
 }

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use base64::{engine::general_purpose::NO_PAD, prelude::BASE64_STANDARD_NO_PAD, Engine};
 use sqlx::{Pool, Postgres};
 use teloxide::{
     payloads::{AnswerInlineQuerySetters, SendAudioSetters},
