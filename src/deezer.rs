@@ -62,10 +62,18 @@ struct InnerDeezerDownloader {
 
 impl InnerDeezerDownloader {
     pub async fn generate() -> anyhow::Result<Self> {
+        let downloader = deezer_downloader::Downloader::new().await?;
         Ok(InnerDeezerDownloader {
             renew_time: SystemTime::now(),
-            downloader: deezer_downloader::Downloader::new().await?,
+            downloader,
         })
+    }
+
+    pub async fn renew(&mut self) -> anyhow::Result<()> {
+        self.downloader.update_tokens().await?;
+        self.renew_time = SystemTime::now();
+
+        Ok(())
     }
 }
 
@@ -84,7 +92,7 @@ impl DeezerDownloader {
         })
     }
 
-    // cheks whether it should gather a new CSRF token
+    // cheks whether it should gather a new token
     async fn should_renew(&self) -> bool {
         let reader = self.inner.read().await;
         SystemTime::now() > reader.renew_time + Self::TRESHOLD
@@ -93,19 +101,19 @@ impl DeezerDownloader {
     // write block the downloader and renew it
     pub async fn renew(&self) -> anyhow::Result<()> {
         let mut inner = self.inner.write().await;
-        *inner = InnerDeezerDownloader::generate().await?;
+        inner.renew().await?;
 
         Ok(())
     }
 
     pub async fn download(&self, id: u64) -> anyhow::Result<deezer_downloader::song::Song> {
-        if dbg!(self.should_renew().await) {
+        if self.should_renew().await {
             log::info!("Downloader expired, renewing it");
             self.renew().await?;
             log::info!("Downloader renewed")
         }
 
         let inner = self.inner.read().await;
-        inner.downloader.download_song(id).await.map_err(Into::into)
+        deezer_downloader::Song::download(id, &inner.downloader).await
     }
 }

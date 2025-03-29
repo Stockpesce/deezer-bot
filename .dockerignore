@@ -1,3 +1,6 @@
 .env
 .git
 /target
+
+./database
+./grafana

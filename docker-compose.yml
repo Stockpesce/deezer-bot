@@ -6,12 +6,15 @@ services:
       - DATABASE_URL=postgres://postgres:supersecretpassword@database:5432/postgres
       - TELOXIDE_TOKEN=${TELOXIDE_TOKEN}
       - BUFFER_CHANNEL=${BUFFER_CHANNEL}
+      - ARL_COOKIE=${ARL_COOKIE}
       - RUST_LOG=info
   database:
-    image: postgres:latest
+    image: postgres:16
     restart: always
     environment:
       - POSTGRES_PASSWORD=supersecretpassword
+    volumes:
+      - ./database:/var/lib/postgresql/data
   prometheus:
     depends_on:
       - bot
@@ -24,3 +27,5 @@ services:
     restart: always
     ports:
       - '3000:3000'
+    volumes:
+      - ./grafana:/var/lib/grafana
