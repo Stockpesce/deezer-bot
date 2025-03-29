@@ -47,30 +47,38 @@ pub struct LikedSong {
 
 pub mod queries {
     use anyhow::Context;
+    use chrono::Utc;
     use deezer_downloader::song::SongMetadata;
     use sqlx::PgExecutor;
+    use teloxide::types::UserId;
 
     use super::{slice_conversion, CachedSong, HistorySong};
 
     /// a value of true means the song got liked by calling this method,
     /// a value of false means the liked was toggled off.
     pub async fn toggle_like_song(
-        user: i64,
-        song_id: i64,
-        sent_by: i64,
+        user: UserId,
+        song_id: i32,
+        sent_by: Option<UserId>,
         executor: impl PgExecutor<'_>,
     ) -> anyhow::Result<bool> {
+        let user: i64 = user.0.try_into().expect("id too big for postgres");
+        let sent_by: Option<i64> =
+            sent_by.map(|user| user.0.try_into().expect("id too big for postgres"));
+
         sqlx::query_scalar(
             r#"
             INSERT INTO likes (liked_by, song_id, sent_by, like_date, liked)
             VALUES ($1, $2, $3, $4, true)
-            ON CONFLICT DO UPDATE SET likes.liked = NOT likes.liked
-            RETURNING likes.liked
+            ON CONFLICT (liked_by, song_id)
+            DO UPDATE SET liked = NOT likes.liked
+            RETURNING liked
             "#,
         )
         .bind(user)
         .bind(song_id)
         .bind(sent_by)
+        .bind(Utc::now())
         .fetch_one(executor)
         .await
         .map_err(Into::into)
@@ -140,12 +148,10 @@ pub mod queries {
         user: i64,
         executor: impl PgExecutor<'_>,
     ) -> anyhow::Result<()> {
-        let now = chrono::Utc::now();
-
         sqlx::query("INSERT INTO history(user_id, song_id, search_date) VALUES ($1, $2, $3)")
             .bind(user)
             .bind(cached_song_id)
-            .bind(now)
+            .bind(Utc::now())
             .execute(executor)
             .await?;
 
@@ -157,7 +163,7 @@ pub mod queries {
         executor: impl PgExecutor<'_>,
     ) -> anyhow::Result<Vec<CachedSong>> {
         let postgres_conversion: &[i64] =
-            slice_conversion(deezer_ids).context("ids are too big for postgres")?;
+            slice_conversion(deezer_ids).expect("ids are too big for postgres");
 
         sqlx::query_as("SELECT * FROM songs WHERE deezer_id = ANY($1)")
             .bind(postgres_conversion)
@@ -174,7 +180,7 @@ pub mod queries {
     ) -> anyhow::Result<CachedSong> {
         let postgres_conversion: i64 = deezer_id
             .try_into()
-            .context("deezer id is too large for postgres")?;
+            .expect("deezer id is too large for postgres");
 
         sqlx::query_as(
             r#"

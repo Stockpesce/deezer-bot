@@ -3,7 +3,7 @@ CREATE TABLE likes (
     liked_by BIGINT NOT NULL,
     song_id  BIGINT NOT NULL,
 
-    sent_by   BIGINT    NOT NULL,
+    sent_by   BIGINT,
     like_date TIMESTAMP NOT NULL,
     liked     BOOL      NOT NULL,
 

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use sqlx::{Pool, Postgres};
 use teloxide::{
-    payloads::{AnswerInlineQuerySetters, SendAudioSetters},
+    payloads::{AnswerInlineQuerySetters, EditMessageMediaInlineSetters, SendAudioSetters},
     requests::Requester,
     types::*,
     Bot,
@@ -44,16 +44,22 @@ fn make_unregistered_query_result(result: &Song) -> InlineQueryResult {
         .into()
 }
 
+fn make_song_reply_markup(song: &CachedSong) -> InlineKeyboardMarkup {
+    let reply_markup_encoded = encoding::encode(CallbackData::Like { id: song.id }).unwrap();
+
+    InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
+        "Like",
+        InlineKeyboardButtonKind::CallbackData(reply_markup_encoded),
+    )]])
+}
+
 /// case when a song is already cached
 fn make_cached_query_result(registered: &CachedSong) -> InlineQueryResult {
     let result_encoded_id = encoding::encode(QueryData::Cached(registered.id)).unwrap();
-    let reply_markup_encoded = encoding::encode(CallbackData::Like { id: registered.id }).unwrap();
+    let keyboard = make_song_reply_markup(registered);
 
     InlineQueryResultCachedAudio::new(result_encoded_id, &registered.file_id)
-        .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
-            "Like",
-            InlineKeyboardButtonKind::CallbackData(reply_markup_encoded),
-        )]]))
+        .reply_markup(keyboard)
         .into()
 }
 
@@ -170,13 +176,18 @@ pub async fn chosen(
     let audio = audio.audio().context("just sent an audio")?;
     let audio_file_id = &audio.file.id;
 
+    // cache song into database
+    let cached_song = queries::insert_song(track_id, audio_file_id, &song.metadata, &pool).await?;
+    log::debug!("Caching a new song: {cached_song:?}");
+
     let input_media = InputMediaAudio::new(InputFile::file_id(audio_file_id));
+    let keyboard = make_song_reply_markup(&cached_song);
+
+    // edit temporary message with media and keyboard
     bot.edit_message_media_inline(message_id, InputMedia::Audio(input_media))
+        .reply_markup(keyboard)
         .await?;
 
-    let cached_song = queries::insert_song(track_id, audio_file_id, &song.metadata, &pool).await?;
-
-    log::debug!("Caching a new song: {cached_song:?}");
     queries::push_history(cached_song.id, result.from.id.0.try_into().unwrap(), &pool).await?;
 
     Ok(())

@@ -444,7 +444,7 @@ dependencies = [
 [[package]]
 name = "deezer_downloader"
 version = "0.1.0"
-source = "git+https://github.com/Stockpesce/deezer_downloader.git#d4b79b12dc7653faad9e4789af012281ee112cb3"
+source = "git+https://github.com/Stockpesce/deezer_downloader.git#8ba8bd01dae0f608826413196a1f72b130c4e8b2"
 dependencies = [
  "anyhow",
  "block-modes",

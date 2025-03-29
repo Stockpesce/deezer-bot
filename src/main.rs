@@ -7,14 +7,14 @@ mod encoding;
 mod inline;
 mod telemetry;
 
-use std::{os::unix::process, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Context;
 use callback::CallbackData;
 use deezer::Deezer;
 use deezer_downloader::downloader::DownloaderBuilder;
+use log::LevelFilter;
 use prometheus::Registry;
-use reqwest::Proxy;
 use sqlx::{pool::PoolOptions, Pool, Postgres};
 use teloxide::{
     dispatching::{HandlerExt, UpdateFilterExt},
@@ -50,7 +50,6 @@ impl Settings {
 enum Commands {
     #[command(description = "Display your search history")]
     History,
-
     #[command(description = "Show start message")]
     Start,
 }
@@ -90,6 +89,7 @@ async fn start_command(bot: Bot, message: Message) -> anyhow::Result<()> {
         "Search a song",
         teloxide::types::InlineKeyboardButtonKind::SwitchInlineQueryCurrentChat("".into()),
     );
+
     let keyboard_markup = ReplyMarkup::inline_kb([[button]]);
 
     bot.send_message(
@@ -126,18 +126,18 @@ fn setup_bot() -> Bot {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
-    env_logger::init();
 
-    let db_url = std::env::var("DATABASE_URL").context("missing DB_URL")?;
-    let arl_cookie = std::env::var("ARL_COOKIE").context("missing arl cookie")?;
+    let default_level = cfg!(debug_assertions)
+        .then_some(LevelFilter::Info)
+        .unwrap_or(LevelFilter::Warn);
 
-    let registry = Registry::new();
-    let telemetry = telemetry::setup_telemetry(registry.clone())?;
-    telemetry::listen_prometheus_server(([0, 0, 0, 0], 8080), registry);
-
-    // database setup
+    env_logger::builder()
+        .filter_level(default_level)
+        .parse_default_env()
+        .init();
 
     let db_url = std::env::var("DATABASE_URL").context("missing DATABASE_URL")?;
+    let arl_cookie = std::env::var("ARL_COOKIE").context("missing arl cookie")?;
 
     let pool = PoolOptions::<Postgres>::new()
         .max_connections(12)
@@ -147,6 +147,10 @@ async fn main() -> anyhow::Result<()> {
         .context("couldn't connect to the database")?;
 
     sqlx::migrate!().run(&pool).await?;
+
+    let registry = Registry::new();
+    let telemetry = telemetry::setup_telemetry(registry.clone())?;
+    telemetry::listen_prometheus_server(([0, 0, 0, 0], 8080), registry);
 
     // read settings from env
     let settings = Arc::new(Settings::from_env()?);
@@ -190,13 +194,15 @@ async fn main() -> anyhow::Result<()> {
                 .endpoint(unknown_command),
         );
 
-    bot.set_my_commands(Commands::bot_commands()).await?;
-
+    // spawn ctrl-c handler
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         std::process::exit(0);
     });
 
+    bot.set_my_commands(Commands::bot_commands()).await?;
+
+    log::info!("Up and running!");
     Dispatcher::builder(bot, tree)
         // .enable_ctrlc_handler()
         .dependencies(dptree::deps![deezer_api, downloader, settings, pool])
