@@ -61,15 +61,7 @@ struct InnerDeezerDownloader {
 }
 
 impl InnerDeezerDownloader {
-    pub async fn generate() -> anyhow::Result<Self> {
-        let downloader = deezer_downloader::Downloader::new().await?;
-        Ok(InnerDeezerDownloader {
-            renew_time: SystemTime::now(),
-            downloader,
-        })
-    }
-
-    pub async fn renew(&mut self) -> anyhow::Result<()> {
+    async fn renew(&mut self) -> anyhow::Result<()> {
         self.downloader.update_tokens().await?;
         self.renew_time = SystemTime::now();
 
@@ -85,11 +77,15 @@ pub struct DeezerDownloader {
 impl DeezerDownloader {
     const TRESHOLD: Duration = Duration::from_secs(60 * 60); // 1 hr
 
-    pub async fn new() -> anyhow::Result<Self> {
-        let inner = InnerDeezerDownloader::generate().await?;
-        Ok(Self {
+    pub fn new(downloader: deezer_downloader::Downloader) -> Self {
+        let inner = InnerDeezerDownloader {
+            renew_time: SystemTime::now(),
+            downloader,
+        };
+
+        Self {
             inner: Arc::new(RwLock::new(inner)),
-        })
+        }
     }
 
     // cheks whether it should gather a new token

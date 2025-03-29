@@ -152,6 +152,10 @@ async fn main() -> anyhow::Result<()> {
         .build()
         .await?;
 
+    // my wrapper that tracks time
+    // between token refreshes
+    let downloader = deezer::DeezerDownloader::new(downloader);
+
     // bot setup
     let bot = setup_bot();
 
