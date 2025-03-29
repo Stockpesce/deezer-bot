@@ -61,11 +61,11 @@ struct InnerDeezerDownloader {
 }
 
 impl InnerDeezerDownloader {
-    pub async fn generate() -> anyhow::Result<Self> {
-        Ok(InnerDeezerDownloader {
-            renew_time: SystemTime::now(),
-            downloader: deezer_downloader::Downloader::new().await?,
-        })
+    async fn renew(&mut self) -> anyhow::Result<()> {
+        self.downloader.update_tokens().await?;
+        self.renew_time = SystemTime::now();
+
+        Ok(())
     }
 }
 
@@ -77,14 +77,18 @@ pub struct DeezerDownloader {
 impl DeezerDownloader {
     const TRESHOLD: Duration = Duration::from_secs(60 * 60); // 1 hr
 
-    pub async fn new() -> anyhow::Result<Self> {
-        let inner = InnerDeezerDownloader::generate().await?;
-        Ok(Self {
+    pub fn new(downloader: deezer_downloader::Downloader) -> Self {
+        let inner = InnerDeezerDownloader {
+            renew_time: SystemTime::now(),
+            downloader,
+        };
+
+        Self {
             inner: Arc::new(RwLock::new(inner)),
-        })
+        }
     }
 
-    // cheks whether it should gather a new CSRF token
+    // cheks whether it should gather a new token
     async fn should_renew(&self) -> bool {
         let reader = self.inner.read().await;
         SystemTime::now() > reader.renew_time + Self::TRESHOLD
@@ -93,21 +97,20 @@ impl DeezerDownloader {
     // write block the downloader and renew it
     pub async fn renew(&self) -> anyhow::Result<()> {
         let mut inner = self.inner.write().await;
-        *inner = InnerDeezerDownloader::generate().await?;
+        inner.renew().await?;
 
         Ok(())
     }
 
     pub async fn download(&self, id: u64) -> anyhow::Result<deezer_downloader::song::Song> {
-        if dbg!(self.should_renew().await) {
+        if self.should_renew().await {
             log::info!("Downloader expired, renewing it");
             self.renew().await?;
             log::info!("Downloader renewed")
         }
 
         let inner = self.inner.read().await;
-        let song = deezer_downloader::song::Song::download(id, &inner.downloader).await?;
 
-        Ok(song)
+        deezer_downloader::Song::download(id, &inner.downloader).await
     }
 }

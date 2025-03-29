@@ -12,7 +12,9 @@ use std::{os::unix::process, sync::Arc};
 use anyhow::Context;
 use callback::CallbackData;
 use deezer::Deezer;
+use deezer_downloader::downloader::DownloaderBuilder;
 use prometheus::Registry;
+use reqwest::Proxy;
 use sqlx::{pool::PoolOptions, Pool, Postgres};
 use teloxide::{
     dispatching::{HandlerExt, UpdateFilterExt},
@@ -24,7 +26,7 @@ use teloxide::{
     Bot,
 };
 
-use crate::{db::queries, deezer::DeezerDownloader};
+use crate::db::queries;
 
 pub struct Settings {
     buffer_channel: ChatId,
@@ -112,11 +114,12 @@ async fn unknown_command(bot: Bot, msg: Message) -> anyhow::Result<()> {
 }
 
 fn setup_bot() -> Bot {
+    // IPv4 only, ipv6 botapi isn't reachable from everywhere
     let client = reqwest::Client::builder()
-        // IPv4 only, ipv6 botapi isn't reachable from everywhere
         .local_address("0.0.0.0".parse().map(Some).unwrap())
         .build()
         .unwrap();
+
     Bot::from_env_with_client(client)
 }
 
@@ -125,13 +128,17 @@ async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
     env_logger::init();
 
-    let registry = Registry::new();
+    let db_url = std::env::var("DATABASE_URL").context("missing DB_URL")?;
+    let arl_cookie = std::env::var("ARL_COOKIE").context("missing arl cookie")?;
 
+    let registry = Registry::new();
     let telemetry = telemetry::setup_telemetry(registry.clone())?;
     telemetry::listen_prometheus_server(([0, 0, 0, 0], 8080), registry);
 
     // database setup
+
     let db_url = std::env::var("DATABASE_URL").context("missing DATABASE_URL")?;
+
     let pool = PoolOptions::<Postgres>::new()
         .max_connections(12)
         .min_connections(4)
@@ -145,8 +152,15 @@ async fn main() -> anyhow::Result<()> {
     let settings = Arc::new(Settings::from_env()?);
 
     // deezer setup
-    let deezer = Arc::new(Deezer::default());
-    let downloader = DeezerDownloader::new().await?;
+    let deezer_api = Arc::new(Deezer::default());
+    let downloader = DownloaderBuilder::new()
+        .arl_cookie(arl_cookie)
+        .build()
+        .await?;
+
+    // my wrapper that tracks time
+    // between token refreshes
+    let downloader = deezer::DeezerDownloader::new(downloader);
 
     // bot setup
     let bot = setup_bot();
@@ -185,7 +199,7 @@ async fn main() -> anyhow::Result<()> {
 
     Dispatcher::builder(bot, tree)
         // .enable_ctrlc_handler()
-        .dependencies(dptree::deps![deezer, downloader, settings, pool])
+        .dependencies(dptree::deps![deezer_api, downloader, settings, pool])
         .build()
         .dispatch()
         .await;
