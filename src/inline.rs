@@ -3,65 +3,22 @@ use std::sync::Arc;
 use anyhow::Context;
 use sqlx::{Pool, Postgres};
 use teloxide::{
-    payloads::{AnswerInlineQuerySetters, EditMessageMediaInlineSetters, SendAudioSetters},
+    payloads::{
+        AnswerInlineQuerySetters, EditMessageMediaInlineSetters,
+        EditMessageReplyMarkupInlineSetters, SendAudioSetters,
+    },
     requests::Requester,
     types::*,
     Bot,
 };
 
 use crate::{
-    callback::{self, CallbackData},
-    db::{queries, CachedSong},
-    deezer::{Deezer, DeezerDownloader, Song},
-    encoding, Settings,
+    db::queries,
+    deezer::{Deezer, DeezerDownloader},
+    encoding,
+    markup::{self, QueryData},
+    Settings,
 };
-
-#[derive(serde::Serialize, serde::Deserialize)]
-/// Wrapper structure that gets serialized in the result id of the
-/// inline query results, so that [`chosen`] knows what song we are talking about
-enum QueryData {
-    // deezer id,
-    Download(u64), // this is the deezer id, not the file id, neither it is the database songs(id)
-    // cached song id
-    Cached(i32), // this is songs(id), not file id
-}
-
-/// case when a song has not been registered yet in the database
-/// and yet has to be cached. Replaces it with its http preview.
-fn make_unregistered_query_result(result: &Song) -> InlineQueryResult {
-    let id = encoding::encode(QueryData::Download(result.id)).unwrap();
-
-    InlineQueryResultAudio::new(id, result.preview.parse().unwrap(), &result.title)
-        .performer(&result.artist.name)
-        .audio_duration(result.duration.to_string())
-        .caption("The file is downloading... please wait.")
-        .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
-            "Loading...",
-            InlineKeyboardButtonKind::CallbackData(
-                encoding::encode(CallbackData::Nothing).unwrap(),
-            ),
-        )]]))
-        .into()
-}
-
-fn make_song_reply_markup(song: &CachedSong) -> InlineKeyboardMarkup {
-    let reply_markup_encoded = encoding::encode(CallbackData::Like { id: song.id }).unwrap();
-
-    InlineKeyboardMarkup::new([[InlineKeyboardButton::new(
-        "Like",
-        InlineKeyboardButtonKind::CallbackData(reply_markup_encoded),
-    )]])
-}
-
-/// case when a song is already cached
-fn make_cached_query_result(registered: &CachedSong) -> InlineQueryResult {
-    let result_encoded_id = encoding::encode(QueryData::Cached(registered.id)).unwrap();
-    let keyboard = make_song_reply_markup(registered);
-
-    InlineQueryResultCachedAudio::new(result_encoded_id, &registered.file_id)
-        .reply_markup(keyboard)
-        .into()
-}
 
 /// inline search, when the query is not empty
 async fn search(
@@ -80,18 +37,18 @@ async fn search(
         .context("failed search on deezer")?;
 
     let ids: Vec<u64> = search_result.iter().map(|result| result.id).collect();
-    let cached_ids = queries::by_deezer_ids(&ids, &pool).await?;
+    let cached_songs = queries::by_deezer_ids(&ids, &pool).await?;
 
-    let cached_iter = cached_ids.iter().map(make_cached_query_result);
+    let cached_iter = cached_songs.iter().map(markup::make_cached_query_result);
     let virgin_iter = search_result
         .iter()
         .filter(|res| {
             // filter registered songs out
-            !cached_ids
+            !cached_songs
                 .iter()
                 .any(|song| song.deezer_id as u64 == res.id)
         })
-        .map(make_unregistered_query_result);
+        .map(markup::make_unregistered_query_result);
 
     let results = cached_iter.chain(virgin_iter);
 
@@ -109,7 +66,7 @@ async fn history(bot: Bot, q: InlineQuery, pool: Pool<Postgres>) -> anyhow::Resu
 
     log::debug!("Showing {} history results", history.len());
 
-    let results = history.iter().map(make_cached_query_result);
+    let results = history.iter().map(markup::make_cached_query_result);
     bot.answer_inline_query(q.id, results).cache_time(0).await?;
 
     Ok(())
@@ -143,17 +100,30 @@ pub async fn chosen(
     // let data: QueryData = serde_json::from_str(&result.result_id)?;
     let data: QueryData = encoding::decode(&result.result_id)?;
 
-    let track_id = match data {
-        QueryData::Download(track_id) => track_id,
-        QueryData::Cached(file_id) => {
-            queries::push_history(file_id, result.from.id.0.try_into().unwrap(), &pool).await?;
-            return Ok(());
-        }
-    };
-
     let message_id = result
         .inline_message_id
         .context("did not receive inline message id")?;
+
+    // TODO:
+    // invert logic. Exit logic can be unified. Download logic can be nested OR separated
+    // into an appropriate function
+    //
+    let track_id = match data {
+        QueryData::Download(track_id) => track_id,
+        QueryData::Cached(id) => {
+            queries::push_history(id, result.from.id.0.try_into().unwrap(), &pool).await?;
+
+            let likes = queries::song_likes(id, &pool).await?;
+            let keyboard = markup::make_song_reply_markup(id, likes);
+
+            bot.edit_message_reply_markup_inline(message_id)
+                .reply_markup(keyboard)
+                .await?;
+
+            // result was cached and there's anything other to do
+            return Ok(());
+        }
+    };
 
     let song = downloader
         .download(track_id)
@@ -181,7 +151,7 @@ pub async fn chosen(
     log::debug!("Caching a new song: {cached_song:?}");
 
     let input_media = InputMediaAudio::new(InputFile::file_id(audio_file_id));
-    let keyboard = make_song_reply_markup(&cached_song);
+    let keyboard = markup::make_song_reply_markup(cached_song.id, 0);
 
     // edit temporary message with media and keyboard
     bot.edit_message_media_inline(message_id, InputMedia::Audio(input_media))

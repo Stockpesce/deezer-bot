@@ -1,6 +1,5 @@
 use base64::{prelude::BASE64_STANDARD_NO_PAD, Engine};
 use serde::{de::DeserializeOwned, Serialize};
-use teloxide::types::CallbackQuery;
 use thiserror::Error;
 
 /// module for encoding very little things
@@ -25,13 +24,4 @@ pub fn encode<T: Serialize>(data: T) -> Result<String, EncoderError> {
 pub fn decode<T: DeserializeOwned>(from: &str) -> Result<T, EncoderError> {
     let decoded = BASE64_STANDARD_NO_PAD.decode(from)?;
     Ok(rmp_serde::from_slice(&decoded)?)
-}
-
-pub fn callback_decoder<T: Serialize + DeserializeOwned>() -> impl Fn(CallbackQuery) -> Option<T> {
-    move |query: CallbackQuery| {
-        let data = query.data?;
-        crate::encoding::decode(&data)
-            .inspect_err(|err| log::error!("Error decoding callback data! {err}"))
-            .ok()
-    }
 }

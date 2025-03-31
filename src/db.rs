@@ -46,18 +46,17 @@ pub struct LikedSong {
 }
 
 pub mod queries {
-    use anyhow::Context;
     use chrono::Utc;
     use deezer_downloader::song::SongMetadata;
     use sqlx::PgExecutor;
     use teloxide::types::UserId;
 
-    use super::{slice_conversion, CachedSong, HistorySong};
+    use super::{slice_conversion, CachedSong, HistorySong, LikedSong};
 
     /// a value of true means the song got liked by calling this method,
     /// a value of false means the liked was toggled off.
     pub async fn toggle_like_song(
-        user: UserId,
+        user: &UserId,
         song_id: i32,
         sent_by: Option<UserId>,
         executor: impl PgExecutor<'_>,
@@ -85,14 +84,37 @@ pub mod queries {
     }
 
     /// returns the amount likes a song has
-    pub async fn song_likes(song_id: i64, executor: impl PgExecutor<'_>) -> anyhow::Result<i64> {
+    pub async fn song_likes(song_id: i32, executor: impl PgExecutor<'_>) -> anyhow::Result<i64> {
         sqlx::query_scalar(
             r#"
-            SELECT COUNT(*) FROM likes WHERE song_id = $1
+            SELECT COUNT(*) FROM likes WHERE song_id = $1 AND liked = true
             "#,
         )
         .bind(song_id)
         .fetch_one(executor)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn get_likes(
+        user: &UserId,
+        limit: i64,
+        executor: impl PgExecutor<'_>,
+    ) -> anyhow::Result<Vec<LikedSong>> {
+        let user: i64 = user.0.try_into().expect("id too big for postgres");
+
+        sqlx::query_as(
+            r#"
+            SELECT *
+            FROM likes
+            WHERE liked_by = $1
+            ORDER BY liked_date DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(user)
+        .bind(limit)
+        .fetch_all(executor)
         .await
         .map_err(Into::into)
     }

@@ -1,32 +1,32 @@
 // id: 31355561
 
 mod callback;
+mod commands;
 mod db;
 mod deezer;
 mod encoding;
 mod inline;
+mod markup;
 mod telemetry;
 
 use std::sync::Arc;
 
 use anyhow::Context;
 use callback::CallbackData;
+use commands::Commands;
 use deezer::Deezer;
 use deezer_downloader::downloader::DownloaderBuilder;
 use log::LevelFilter;
 use prometheus::Registry;
-use sqlx::{pool::PoolOptions, Pool, Postgres};
+use sqlx::{pool::PoolOptions, Postgres};
 use teloxide::{
     dispatching::{HandlerExt, UpdateFilterExt},
-    payloads::SendMessageSetters,
     prelude::Dispatcher,
     requests::Requester,
-    types::{ChatId, InlineKeyboardButton, Message, ParseMode, ReplyMarkup, Update},
+    types::{ChatId, Update},
     utils::command::BotCommands,
     Bot,
 };
-
-use crate::db::queries;
 
 pub struct Settings {
     buffer_channel: ChatId,
@@ -43,74 +43,6 @@ impl Settings {
             buffer_channel: ChatId(buffer_channel),
         })
     }
-}
-
-#[derive(BotCommands, PartialEq, Debug, Clone)]
-#[command(rename_rule = "lowercase", parse_with = "split")]
-enum Commands {
-    #[command(description = "Display your search history")]
-    History,
-    #[command(description = "Show start message")]
-    Start,
-}
-
-impl std::fmt::Display for Commands {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::History => write!(f, "history"),
-            Self::Start => write!(f, "start"),
-        }
-    }
-}
-
-async fn history_command(bot: Bot, msg: Message, pool: Pool<Postgres>) -> anyhow::Result<()> {
-    use std::fmt::Write;
-
-    let from = msg.from().context("command was not sent by a user")?;
-
-    let history = queries::get_history(from.id.0 as i64, 10, &pool).await?;
-    let text = String::from("Your last 10 searches:\n\n");
-    let history_formatted = history
-        .into_iter()
-        .enumerate()
-        .map(|(n, song)| (n + 1, song))
-        .fold(text, |mut s, (n, song)| {
-            writeln!(&mut s, "{n}) {} - {}", song.song_artist, song.song_name).ok();
-            s
-        });
-
-    bot.send_message(msg.chat.id, history_formatted).await?;
-
-    Ok(())
-}
-
-async fn start_command(bot: Bot, message: Message) -> anyhow::Result<()> {
-    let button = InlineKeyboardButton::new(
-        "Search a song",
-        teloxide::types::InlineKeyboardButtonKind::SwitchInlineQueryCurrentChat("".into()),
-    );
-
-    let keyboard_markup = ReplyMarkup::inline_kb([[button]]);
-
-    bot.send_message(
-        message.chat.id,
-        "Hi, song searching is only available inline.\nStart searching by clicking the button below",
-    )
-    .reply_markup(keyboard_markup)
-    .parse_mode(ParseMode::Html)
-    .await?;
-
-    Ok(())
-}
-
-async fn unknown_command(bot: Bot, msg: Message) -> anyhow::Result<()> {
-    // some groups might enable access to all messages
-    // by mistake
-    if msg.chat.is_private() {
-        bot.send_message(msg.chat.id, "Uknown command!").await?;
-    }
-
-    Ok(())
 }
 
 fn setup_bot() -> Bot {
@@ -172,8 +104,8 @@ async fn main() -> anyhow::Result<()> {
     let command_tree = dptree::entry()
         .filter_command::<Commands>()
         .inspect(telemetry::command_telemetry::<Commands>(&telemetry))
-        .branch(dptree::case![Commands::History].endpoint(history_command))
-        .branch(dptree::case![Commands::Start].endpoint(start_command));
+        .branch(dptree::case![Commands::History].endpoint(commands::history_command))
+        .branch(dptree::case![Commands::Start].endpoint(commands::start_command));
 
     let tree = dptree::entry()
         .inspect(telemetry::update_telemetry(&telemetry))
@@ -184,14 +116,14 @@ async fn main() -> anyhow::Result<()> {
         )
         .branch(
             Update::filter_callback_query()
-                .filter_map(encoding::callback_decoder::<CallbackData>())
+                .filter_map(callback::callback_decoder::<CallbackData>())
                 .endpoint(callback::handle_callback),
         )
         .branch(Update::filter_chosen_inline_result().endpoint(inline::chosen))
         .branch(
             Update::filter_message()
                 .branch(command_tree)
-                .endpoint(unknown_command),
+                .endpoint(commands::unknown_command),
         );
 
     // spawn ctrl-c handler
