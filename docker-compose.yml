@@ -7,7 +7,7 @@ services:
       - TELOXIDE_TOKEN=${TELOXIDE_TOKEN}
       - BUFFER_CHANNEL=${BUFFER_CHANNEL}
       - ARL_COOKIE=${ARL_COOKIE}
-      - RUST_LOG=info
+      - RUST_LOG=warn
   database:
     image: postgres:16
     restart: always
@@ -15,13 +15,13 @@ services:
       - POSTGRES_PASSWORD=supersecretpassword
     volumes:
       - ./database:/var/lib/postgresql/data
-  prometheus:
-    depends_on:
-      - bot
-    image: prom/prometheus
-    restart: always
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+  # prometheus:
+  #   depends_on:
+  #     - bot
+  #   image: prom/prometheus
+  #   restart: always
+  #   volumes:
+  #     - ./prometheus.yml:/etc/prometheus/prometheus.yml
   grafana:
     image: grafana/grafana
     restart: always

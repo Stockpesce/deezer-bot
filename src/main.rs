@@ -3,14 +3,14 @@
 mod db;
 mod deezer;
 mod inline;
-mod telemetry;
+// mod telemetry;
 
 use std::sync::Arc;
 
 use anyhow::Context;
 use deezer::Deezer;
 use deezer_downloader::downloader::DownloaderBuilder;
-use prometheus::Registry;
+// use prometheus::Registry;
 use reqwest::Proxy;
 use sqlx::{pool::PoolOptions, Pool, Postgres};
 use teloxide::{
@@ -128,9 +128,9 @@ async fn main() -> anyhow::Result<()> {
     let db_url = std::env::var("DATABASE_URL").context("missing DB_URL")?;
     let arl_cookie = std::env::var("ARL_COOKIE").context("missing arl cookie")?;
 
-    let registry = Registry::new();
-    let telemetry = telemetry::setup_telemetry(registry.clone())?;
-    telemetry::listen_prometheus_server(([0, 0, 0, 0], 8080), registry);
+    // let registry = Registry::new();
+    // let telemetry = telemetry::setup_telemetry(registry.clone())?;
+    // telemetry::listen_prometheus_server(([0, 0, 0, 0], 8080), registry);
 
     // database setup
     let pool = PoolOptions::<Postgres>::new()
@@ -161,15 +161,15 @@ async fn main() -> anyhow::Result<()> {
 
     let command_tree = dptree::entry()
         .filter_command::<Commands>()
-        .inspect(telemetry::command_telemetry::<Commands>(&telemetry))
+        // .inspect(telemetry::command_telemetry::<Commands>(&telemetry))
         .branch(dptree::case![Commands::History].endpoint(history_command))
         .branch(dptree::case![Commands::Start].endpoint(start_command));
 
     let tree = dptree::entry()
-        .inspect(telemetry::update_telemetry(&telemetry))
+        // .inspect(telemetry::update_telemetry(&telemetry))
         .branch(
             Update::filter_inline_query()
-                .inspect(telemetry::inline_telemetry(&telemetry))
+                // .inspect(telemetry::inline_telemetry(&telemetry))
                 .endpoint(inline::inline_query),
         )
         .branch(Update::filter_chosen_inline_result().endpoint(inline::chosen))

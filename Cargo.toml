@@ -21,9 +21,9 @@ log = "0.4.20"
 chrono = "0.4.31"
 
 # tracing deps
-opentelemetry = { version = "0.20.0", features = ["metrics"] }
-opentelemetry-prometheus = "0.13.0"
-prometheus = "0.13.3"
+# opentelemetry = { version = "0.20.0", features = ["metrics"] }
+# opentelemetry-prometheus = "0.13.0"
+# prometheus = "0.13.3"
 hyper = { version = "0.14.27", features = [
     "server",
     "http1",
